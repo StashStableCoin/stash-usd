@@ -1,0 +1,77 @@
+# .github/workflows/build.yml
+name: Build & Package STUSD
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-cryptonote:
+    name: Build cryptonote-core (C++)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential cmake git \
+            libboost-all-dev libssl-dev libzmq3-dev \
+            libcurl4-openssl-dev pkg-config curl
+
+      - name: Clone Monero core
+        working-directory: cryptonote-core/src
+        run: git clone https://github.com/monero-project/monero.git .
+
+      - name: Build STUSD
+        working-directory: cryptonote-core/src
+        run: |
+          mkdir -p build
+          cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release
+          make -j$(nproc)
+
+      - name: Collect binaries
+        run: |
+          mkdir -p cryptonote-core/build-output
+          cp cryptonote-core/src/build/stashusd cryptonote-core/build-output/
+          cp cryptonote-core/src/build/stashusd-wallet-cli cryptonote-core/build-output/
+
+  build-erc20:
+    name: Compile ERC20/TRC20
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with: node-version: 18
+      - name: Install npm deps
+        working-directory: eth-trc20-token
+        run: npm install
+      - name: Compile contracts
+        working-directory: eth-trc20-token
+        run: npx hardhat compile
+
+  package-artifact:
+    name: Package & Upload
+    needs: [build-cryptonote, build-erc20]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Gather outputs
+        run: |
+          mkdir -p release/artifact
+          cp cryptonote-core/build-output/* release/artifact/
+          cp -r eth-trc20-token/artifacts release/artifact/contracts
+          cp -r bridge-server release/artifact/
+          cp -r docs release/artifact/
+          cp -r wallets release/artifact/
+      - name: Zip it up
+        run: |
+          cd release
+          zip -r stash-usd-release.zip artifact
+      - name: Upload ZIP
+        uses: actions/upload-artifact@v3
+        with:
+          name: stash-usd-release
+          path: release/stash-usd-release.zip
